@@ -1,5 +1,8 @@
 # Unified File System
 
+[![Python package](https://github.com/spsoni/ufs/actions/workflows/python-package.yml/badge.svg)](https://github.com/spsoni/ufs/actions/workflows/python-package.yml)
+[![CodeQL](https://github.com/spsoni/ufs/actions/workflows/codeql.yml/badge.svg)](https://github.com/spsoni/ufs/actions/workflows/codeql.yml)
+
 Developers face common problem in writing code in local filesystem first and then make the code to work with S3.
 This creates a painful situation if not too much of code duplication.
 

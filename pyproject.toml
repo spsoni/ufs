@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "ufs"
+version = "0.1.0"
+description = "Unified File System - Object Oriented way to work seamlessly between Posix and S3 filesystems"
+authors = ["Sury Soni <github@suryasoni.info>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/spsoni/ufs"
+keywords = ["FileSystem", "Posix", "AWS", "S3"]
+repository = "https://github.com/spsoni/ufs"
+packages = [{ include = "ufs" }]
+
+[tool.poetry.dependencies]
+python = "^3.8.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest-cov = "^4.1.0"
+boto3 = "^1.26.158"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

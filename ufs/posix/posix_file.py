@@ -1,3 +1,7 @@
+import hashlib
+import os
+import shutil
+from io import BytesIO
 from pathlib import PosixPath
 
 from ufs.base import File
@@ -31,16 +35,17 @@ class PosixFile(File):
         return open(self, "rb").read()
 
     def checksum(self, *args, **kwargs):
-        pass
+        digest = hashlib.file_digest(BytesIO(open(self, "rb").read()), "sha256")
+        return digest.hexdigest()
 
     def duplicate(self, dst: "File"):
-        pass
+        shutil.copy(self, dst)
 
     def copy_to(self, dst: "Directory"):
-        pass
+        shutil.copy(self, dst)
 
     def size(self) -> int:
-        PosixPath(self).stat()
+        return os.stat(self).st_size
 
     def exists(self) -> bool:
-        pass
+        return PosixPath(self).exists()

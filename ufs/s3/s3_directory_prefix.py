@@ -3,13 +3,16 @@ from ufs.s3.s3_common import S3Object
 
 
 class S3DirectoryPrefix(S3Object, DirectoryPrefix):
-    def remove(self, *args, **kwargs):
+    def remove(self, missing_ok: bool = True, *args, **kwargs):
         pass
 
-    def list(self, recursive: bool = True, *args, **kwargs):
+    def list_files(self, recursive: bool = True, *args, **kwargs) -> list:
         pass
 
-    def copy_to(self, dst: "Directory"):
+    def list_file_objects(self, recursive: bool = True, *args, **kwargs) -> list:
+        pass
+
+    def copy_to(self, dst: "Directory", dir_exist_ok: bool = False):
         pass
 
     def zip_to(self, dst: File):
@@ -19,10 +22,4 @@ class S3DirectoryPrefix(S3Object, DirectoryPrefix):
         pass
 
     def file_count(self) -> int:
-        pass
-
-    def size(self) -> int:
-        pass
-
-    def exists(self) -> bool:
         pass

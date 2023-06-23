@@ -2,13 +2,16 @@ from ufs.base import DirectoryPrefix, File
 
 
 class PosixDirectoryPrefix(DirectoryPrefix):
-    def remove(self, *args, **kwargs):
+    def remove(self, missing_ok: bool = True, *args, **kwargs):
         pass
 
-    def list(self, recursive: bool = True, *args, **kwargs):
+    def list_files(self, recursive: bool = True, *args, **kwargs) -> list:
         pass
 
-    def copy_to(self, dst: "Directory"):
+    def list_file_objects(self, recursive: bool = True, *args, **kwargs) -> list:
+        pass
+
+    def copy_to(self, dst: "Directory", dir_exist_ok: bool = False):
         pass
 
     def zip_to(self, dst: File):
@@ -18,6 +21,9 @@ class PosixDirectoryPrefix(DirectoryPrefix):
         pass
 
     def file_count(self) -> int:
+        pass
+
+    def _validate_path(self, path) -> bool:
         pass
 
     def size(self) -> int:

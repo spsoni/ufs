@@ -3,25 +3,28 @@ from ufs.s3.s3_common import S3Object
 
 
 class S3Directory(S3Object, Directory):
-    def is_directory_path(self) -> bool:
-        return True
-
-    def create(self, exist_ok: bool = False, *args, **kwargs):
+    def create(self, parents: bool = True, exist_ok: bool = False, *args, **kwargs):
         pass
 
-    def duplicate(self, dst: "Directory"):
+    def duplicate(self, dst: "Directory", dir_exist_ok: bool = False):
         pass
 
-    def joinpath(self, *other):
+    def join_as_file(self, *other) -> "File":
+        pass
+
+    def join_as_directory(self, *other) -> "Directory":
         pass
 
     def remove(self, missing_ok: bool = True, *args, **kwargs):
         pass
 
-    def list(self, recursive: bool = True, *args, **kwargs):
+    def list_files(self, recursive: bool = True, *args, **kwargs) -> list:
         pass
 
-    def copy_to(self, dst: "Directory"):
+    def list_file_objects(self, recursive: bool = True, *args, **kwargs) -> list:
+        pass
+
+    def copy_to(self, dst: "Directory", dir_exist_ok: bool = False):
         pass
 
     def zip_to(self, dst: File):
@@ -33,8 +36,5 @@ class S3Directory(S3Object, Directory):
     def file_count(self) -> int:
         pass
 
-    def size(self) -> int:
-        pass
-
-    def exists(self) -> bool:
-        pass
+    def is_directory_path(self) -> bool:
+        return True

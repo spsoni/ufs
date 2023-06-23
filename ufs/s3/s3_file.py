@@ -3,9 +3,6 @@ from ufs.s3.s3_common import S3Object
 
 
 class S3File(S3Object, File):
-    def is_file_path(self) -> bool:
-        return True
-
     def write_text(self, content, mode, *args, **kwargs):
         pass
 
@@ -15,7 +12,7 @@ class S3File(S3Object, File):
     def touch(self, *args, **kwargs):
         pass
 
-    def remove(self, missing_ok: bool = True, *args, **kwargs):
+    def remove(self, *args, **kwargs):
         pass
 
     def read_text(self):
@@ -31,10 +28,4 @@ class S3File(S3Object, File):
         pass
 
     def copy_to(self, dst: "Directory"):
-        pass
-
-    def size(self) -> int:
-        pass
-
-    def exists(self) -> bool:
         pass

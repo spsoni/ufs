@@ -76,7 +76,7 @@ class File(FileSystemObject, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def checksum(self, *args, **kwargs):
+    def checksum(self, *args, **kwargs) -> str:
         raise NotImplementedError
 
     @abstractmethod
@@ -108,11 +108,11 @@ class DirectoryPrefix(FileSystemObject, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def zip_to(self, dst: File):
+    def archive_to_posix(self, dst: File, archive_format: str):
         raise NotImplementedError
 
     @abstractmethod
-    def tar_gz_to(self, dst: File):
+    def archive_to_s3(self, dst: File, archive_format: str):
         raise NotImplementedError
 
     @abstractmethod

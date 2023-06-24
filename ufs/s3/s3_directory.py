@@ -127,26 +127,21 @@ class S3Directory(S3Object, Directory):
         dst = dst.join_as_directory(source_basename)
         return self.duplicate(dst)
 
-    def zip_to(self, dst: File):
+    def archive_to_posix(self, dst: File, archive_format: str):
         from ufs.posix.posix_directory import PosixDirectory
-        from ufs.posix.posix_file import PosixFile
-        from ufs.s3.s3_file import S3File
 
         with tempfile.TemporaryDirectory() as temp_staging:
             temp_stg = PosixDirectory(temp_staging)
             # first download source s3 directory to Posix Directory
             self._download(temp_stg)
+            temp_stg.zip_to(dst, archive_format=archive_format)
 
-            if isinstance(dst, PosixFile):
-                temp_stg.zip_to(dst)
-            elif not isinstance(dst, S3File):
-                raise NotImplementedError
+    def archive_to_s3(self, dst: File, archive_format: str):
+        from ufs.posix.posix_file import PosixFile
 
-            # then, zip it to Posix File (temporary) first
-            temp_zip_file = PosixFile(f"/tmp/{uuid4()}/{os.path.basename(dst)}")
-            temp_stg.zip_to(temp_zip_file)
-            # then, upload to dst S3 File
-            dst._upload(temp_zip_file)
+        temp_file = PosixFile(join(f'/tmp/{uuid4()}', os.path.basename(dst)))
+        self.archive_to_posix(temp_file, archive_format)
+        dst._upload(temp_file)
 
     def tar_gz_to(self, dst: File):
         from ufs.posix.posix_directory import PosixDirectory

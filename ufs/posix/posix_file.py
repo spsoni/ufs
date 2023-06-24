@@ -37,7 +37,7 @@ class PosixFile(File):
     def read_bytes(self) -> bytes:
         return open(self, "rb").read()
 
-    def checksum(self, *args, **kwargs):
+    def checksum(self, *args, **kwargs) -> str:
         digest = hashlib.file_digest(BytesIO(open(self, "rb").read()), "sha256")
         return digest.hexdigest()
 

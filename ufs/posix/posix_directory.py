@@ -2,6 +2,7 @@ import os.path
 import shutil
 from pathlib import PosixPath
 from typing import Union
+from uuid import uuid4
 
 from ufs.base import Directory, File
 from ufs.posix.posix_common import (
@@ -62,15 +63,25 @@ class PosixDirectory(PosixObject, Directory):
         dst = dst.join_as_directory(base_name)
         shutil.copytree(self, dst, dirs_exist_ok=dir_exist_ok)
 
-    def zip_to(self, dst: File):
-        assert dst.endswith(".zip")
-        base_name = str(dst).replace(".zip", "")
-        shutil.make_archive(base_name=base_name, format="tar", root_dir=self)
+    def archive_to_posix(self, dst: File, archive_format: str):
+        extension = ''
+        if archive_format == 'zip':
+            assert dst.endswith(".zip")
+            extension = '.zip'
+        elif archive_format == 'gztar':
+            assert dst.endswith('.tar.gz')
+            extension = '.tar.gz'
+        else:
+            raise RuntimeError(f'Un-supported archive format: {archive_format}')
 
-    def tar_gz_to(self, dst: File):
-        assert dst.endswith(".tar.gz")
-        base_name = str(dst).replace(".tar.gz", "")
-        shutil.make_archive(base_name=base_name, format="gztar", root_dir=self)
+        base_name = str(dst).replace(extension, "")
+        shutil.make_archive(base_name=base_name, format=archive_format, root_dir=self)
+
+    def archive_to_s3(self, dst: File, archive_format: str):
+        from ufs.posix.posix_file import PosixFile
+        temp_file = PosixFile(os.path.join(f'/tmp/{uuid4()}', os.path.basename(dst)))
+        self.archive_to_posix(temp_file, archive_format)
+        dst._upload(temp_file)
 
     def file_count(self) -> int:
         return file_counter(str(self))

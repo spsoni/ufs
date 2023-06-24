@@ -1,14 +1,20 @@
 import os.path
 import shutil
 from pathlib import PosixPath
+from typing import Union
 
 from ufs.base import Directory, File
-from ufs.posix.posix_common import file_counter, get_dir_size, get_files_list
+from ufs.posix.posix_common import (
+    file_counter,
+    get_dir_size,
+    get_files_list,
+    PosixObject,
+)
 
 
-class PosixDirectory(Directory):
-    def __init__(self, path: str, *args, **kwargs):
-        if not path.strip().endswith("/"):
+class PosixDirectory(PosixObject, Directory):
+    def __init__(self, path: Union[str, PosixPath], *args, **kwargs):
+        if not str(path).strip().endswith("/"):
             path = path.strip() + "/"
         super().__init__(path, *args, **kwargs)
 
@@ -32,16 +38,23 @@ class PosixDirectory(Directory):
     def join_as_directory(self, *other) -> "Directory":
         return PosixDirectory(PosixPath(self).joinpath(*other))
 
-    def remove(self, missing_ok: bool = True, *args, **kwargs):
-        PosixPath(self).unlink(missing_ok)
+    def remove(self, missing_ok: bool = True, dry_run: bool = False, *args, **kwargs):
+        if not dry_run:
+            return PosixPath(self).unlink(missing_ok)
 
-    def list_files(self, recursive: bool = True, *args, **kwargs):
-        return sorted(get_files_list(str(self), recursive=recursive))
+        for file_path in self.list_files(recursive=True):
+            print(f"Deleting: {file_path}")
 
-    def list_file_objects(self, recursive: bool = True, *args, **kwargs) -> list:
+    def list_files(self, recursive: bool = True, limit: int = -1, *args, **kwargs):
+        # Note: limit do not allow correct sorting order
+        return sorted(get_files_list(str(self), recursive=recursive, limit=limit))
+
+    def list_file_objects(
+            self, recursive: bool = True, limit: int = -1, *args, **kwargs
+    ) -> list:
         from ufs.posix.posix_file import PosixFile
 
-        files = self.list_files(recursive, *args, **kwargs)
+        files = self.list_files(recursive, limit=limit, *args, **kwargs)
         return [PosixFile(f) for f in files]
 
     def copy_to(self, dst: "Directory", dir_exist_ok: bool = False):

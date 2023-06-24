@@ -9,6 +9,9 @@ from ufs.posix.posix_common import convert_mode
 
 
 class PosixFile(File):
+    def _validate_path(self, path: str) -> bool:
+        return path.startswith("/") and not path.endswith("/")
+
     def is_file_path(self) -> bool:
         return True
 

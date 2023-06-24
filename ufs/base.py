@@ -1,9 +1,11 @@
 import os
 from abc import ABC, abstractmethod
+from pathlib import PosixPath
+from typing import Union
 
 
 class FileSystemObject(os.PathLike, ABC):
-    def __init__(self, path, *args, **kwargs):
+    def __init__(self, path: Union[str, PosixPath], *args, **kwargs):
         self._path = str(path).strip()
 
     def __str__(self):
@@ -38,6 +40,14 @@ class FileSystemObject(os.PathLike, ABC):
 
     def is_directory_path(self) -> bool:
         return False
+
+    @abstractmethod
+    def as_file(self) -> "File":
+        raise NotImplementedError
+
+    @abstractmethod
+    def as_directory(self) -> "Directory":
+        raise NotImplementedError
 
 
 class File(FileSystemObject, ABC):
@@ -80,11 +90,13 @@ class File(FileSystemObject, ABC):
 
 class DirectoryPrefix(FileSystemObject, ABC):
     @abstractmethod
-    def remove(self, missing_ok: bool = True, *args, **kwargs):
+    def remove(self, missing_ok: bool = True, dry_run: bool = False, *args, **kwargs):
         raise NotImplementedError
 
     @abstractmethod
-    def list_files(self, recursive: bool = True, *args, **kwargs) -> list:
+    def list_files(
+            self, recursive: bool = True, limit: int = -1, *args, **kwargs
+    ) -> list:
         raise NotImplementedError
 
     @abstractmethod

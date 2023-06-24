@@ -1,4 +1,19 @@
 import os
+from abc import ABC
+
+from ufs.base import FileSystemObject
+
+
+class PosixObject(FileSystemObject, ABC):
+    def as_file(self) -> "File":
+        from ufs.posix.posix_file import PosixFile
+
+        return PosixFile(self._path)
+
+    def as_directory(self) -> "Directory":
+        from ufs.posix.posix_directory import PosixDirectory
+
+        return PosixDirectory(self._path)
 
 
 def convert_mode(mode: str, format: str) -> str:
@@ -32,14 +47,24 @@ def file_counter(path: str) -> int:
     return total
 
 
-def get_files_list(path: str, recursive: bool = True) -> list:
+def get_files_list(path: str, recursive: bool = True, limit: int = -1) -> list:
     files = list()
+    counter = 0
+
     with os.scandir(path) as it:
         for entry in it:
             if entry.is_file():
                 files.append(str(entry.path))
+                counter += 1
             elif entry.is_dir() and recursive:
-                files.extend(get_files_list(str(entry.path), recursive))
+                files.extend(
+                    get_files_list(str(entry.path), recursive, limit=(limit - counter))
+                )
+            if 0 < limit <= counter:
+                break
+
+    if 0 < limit < len(files):
+        files = files[:limit]
 
     return files
 

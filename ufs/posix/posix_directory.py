@@ -1,93 +1,81 @@
-import os.path
-import shutil
-from pathlib import PosixPath
-from typing import Union
-from uuid import uuid4
+from __future__ import annotations
 
-from ufs.base import Directory, File
-from ufs.posix.posix_common import (
-    file_counter,
-    get_dir_size,
-    get_files_list,
-    PosixObject,
-)
+import logging
+import shutil
+from pathlib import Path
+
+from ufs.base import ArchiveFormat, Directory, File, archive_base_name
+from ufs.exceptions import UnsupportedOperationError
+from ufs.posix.posix_common import PosixObject, iter_files
+from ufs.posix.posix_file import PosixFile
+
+logger = logging.getLogger(__name__)
 
 
 class PosixDirectory(PosixObject, Directory):
-    def __init__(self, path: Union[str, PosixPath], *args, **kwargs):
-        if not str(path).strip().endswith("/"):
-            path = path.strip() + "/"
-        super().__init__(path, *args, **kwargs)
+    """A directory on the local filesystem. Its path always ends with ``/``."""
 
     def _validate_path(self, path: str) -> bool:
-        return path.startswith("/") and path.endswith("/")
+        return path.startswith("/") and super()._validate_path(path)
 
-    def is_directory_path(self) -> bool:
-        return True
+    @property
+    def path(self) -> Path:
+        return Path(self._path)
 
-    def create(self, parents: bool = True, exist_ok: bool = False, *args, **kwargs):
-        PosixPath(self).mkdir(parents=parents, exist_ok=exist_ok)
+    def create(self, parents: bool = True, exist_ok: bool = False) -> None:
+        self.path.mkdir(parents=parents, exist_ok=exist_ok)
 
-    def duplicate(self, dst: "Directory", dir_exist_ok: bool = False):
-        shutil.copytree(self, dst, dirs_exist_ok=dir_exist_ok)
+    def duplicate(self, dst: Directory, dir_exist_ok: bool = False) -> Directory:
+        from ufs.s3.s3_directory import S3Directory
 
-    def join_as_file(self, *other) -> "File":
-        from ufs.posix.posix_file import PosixFile
-
-        return PosixFile(PosixPath(self).joinpath(*other))
-
-    def join_as_directory(self, *other) -> "Directory":
-        return PosixDirectory(PosixPath(self).joinpath(*other))
-
-    def remove(self, missing_ok: bool = True, dry_run: bool = False, *args, **kwargs):
-        if not dry_run:
-            return PosixPath(self).unlink(missing_ok)
-
-        for file_path in self.list_files(recursive=True):
-            print(f"Deleting: {file_path}")
-
-    def list_files(self, recursive: bool = True, limit: int = -1, *args, **kwargs):
-        # Note: limit do not allow correct sorting order
-        return sorted(get_files_list(str(self), recursive=recursive, limit=limit))
-
-    def list_file_objects(
-            self, recursive: bool = True, limit: int = -1, *args, **kwargs
-    ) -> list:
-        from ufs.posix.posix_file import PosixFile
-
-        files = self.list_files(recursive, limit=limit, *args, **kwargs)
-        return [PosixFile(f) for f in files]
-
-    def copy_to(self, dst: "Directory", dir_exist_ok: bool = False):
-        base_name = os.path.basename(self)
-        dst = dst.join_as_directory(base_name)
-        shutil.copytree(self, dst, dirs_exist_ok=dir_exist_ok)
-
-    def archive_to_posix(self, dst: File, archive_format: str):
-        extension = ''
-        if archive_format == 'zip':
-            assert dst.endswith(".zip")
-            extension = '.zip'
-        elif archive_format == 'gztar':
-            assert dst.endswith('.tar.gz')
-            extension = '.tar.gz'
+        if isinstance(dst, PosixDirectory):
+            shutil.copytree(self, dst, dirs_exist_ok=dir_exist_ok)
+        elif isinstance(dst, S3Directory):
+            dst._upload(self)
         else:
-            raise RuntimeError(f'Un-supported archive format: {archive_format}')
+            raise UnsupportedOperationError(f"Cannot copy {self!r} to {dst!r}")
+        return dst
 
-        base_name = str(dst).replace(extension, "")
+    def join_as_file(self, *other: str) -> PosixFile:
+        return PosixFile(self.path.joinpath(*(p.lstrip("/") for p in other)))
+
+    def join_as_directory(self, *other: str) -> PosixDirectory:
+        return PosixDirectory(self.path.joinpath(*(p.lstrip("/") for p in other)))
+
+    def remove(self, missing_ok: bool = True, dry_run: bool = False) -> list[str]:
+        if not self.exists():
+            if missing_ok:
+                return []
+            raise FileNotFoundError(self._path)
+
+        files = self.list_files(recursive=True)
+        if dry_run:
+            for file_path in files:
+                logger.info("Deleting (dry run): %s", file_path)
+            return files
+
+        shutil.rmtree(self)
+        return files
+
+    def list_files(self, recursive: bool = True, limit: int = -1) -> list[str]:
+        files = sorted(entry.path for entry in iter_files(self._path, recursive))
+        return files[:limit] if limit > 0 else files
+
+    def list_file_objects(self, recursive: bool = True, limit: int = -1) -> list[File]:
+        return [PosixFile(f) for f in self.list_files(recursive, limit=limit)]
+
+    def archive_to_posix(self, dst: File, archive_format: ArchiveFormat) -> None:
+        if not isinstance(dst, PosixFile):
+            raise UnsupportedOperationError(f"archive_to_posix needs a PosixFile, got {dst!r}")
+        base_name = archive_base_name(dst, archive_format)
+        dst.path.parent.mkdir(parents=True, exist_ok=True)
         shutil.make_archive(base_name=base_name, format=archive_format, root_dir=self)
 
-    def archive_to_s3(self, dst: File, archive_format: str):
-        from ufs.posix.posix_file import PosixFile
-        temp_file = PosixFile(os.path.join(f'/tmp/{uuid4()}', os.path.basename(dst)))
-        self.archive_to_posix(temp_file, archive_format)
-        dst._upload(temp_file)
-
     def file_count(self) -> int:
-        return file_counter(str(self))
+        return sum(1 for _ in iter_files(self._path))
 
     def size(self) -> int:
-        return get_dir_size(str(self))
+        return sum(entry.stat().st_size for entry in iter_files(self._path))
 
     def exists(self) -> bool:
-        return PosixPath(self).exists()
+        return self.path.is_dir()

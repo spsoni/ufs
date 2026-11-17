@@ -1,222 +1,132 @@
-import os.path
-import tempfile
-from os.path import join
-from uuid import uuid4
+from __future__ import annotations
 
-from ufs.base import Directory, File
+import posixpath
+import tempfile
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any
+
+from ufs.base import ArchiveFormat, Directory, File
+from ufs.exceptions import UnsupportedOperationError
 from ufs.s3.s3_common import S3Object, delete_s3_objects
+from ufs.s3.s3_file import S3File
+
+if TYPE_CHECKING:
+    from ufs.posix.posix_common import PosixObject
 
 
 class S3Directory(S3Object, Directory):
+    """A key prefix in an S3 bucket, e.g. ``s3://bucket/path/``. Its path always ends with ``/``.
+
+    Keys ending in ``/`` are treated as directory markers, not files.
+    """
+
+    def _iter_objects(self, recursive: bool = True) -> Iterator[dict[str, Any]]:
+        """Yield the ``list_objects_v2`` content entries under this prefix (incl. markers)."""
+        paginator = self.client.get_paginator("list_objects_v2")
+        kwargs: dict[str, Any] = {"Bucket": self.bucket_name, "Prefix": self.prefix}
+        if not recursive:
+            kwargs["Delimiter"] = "/"
+        for page in paginator.paginate(**kwargs):
+            yield from page.get("Contents", [])
+
+    def _iter_file_keys(self, recursive: bool = True) -> Iterator[str]:
+        for obj in self._iter_objects(recursive):
+            if not obj["Key"].endswith("/"):
+                yield obj["Key"]
+
     def size(self) -> int:
-        paginator = self._client.get_paginator("list_objects_v2")
-        response_iterator = paginator.paginate(
-            Bucket=self.bucket_name, Prefix=self.prefx
-        )
-        full_size = 0
-        for response in response_iterator:
-            if "Contents" not in response:
-                continue
-            for content in response["Contents"]:
-                full_size += content["Size"]
-        return full_size
+        return sum(int(obj["Size"]) for obj in self._iter_objects())
 
     def exists(self) -> bool:
-        if self.keep_directories_logical:
-            return True
-        files = self.list_files(limit=1)
-        if len(files) > 0:
-            return True
-        return False
+        response = self.client.list_objects_v2(
+            Bucket=self.bucket_name, Prefix=self.prefix, MaxKeys=1
+        )
+        return int(response.get("KeyCount", 0)) > 0
 
-    def create(self, parents: bool = True, exist_ok: bool = False, *args, **kwargs):
+    def create(self, parents: bool = True, exist_ok: bool = False) -> None:
         if self.keep_directories_logical:
             return
-        raise NotImplementedError
+        if not exist_ok and self.exists():
+            raise FileExistsError(self._path)
+        self.client.put_object(Bucket=self.bucket_name, Key=self.prefix, Body=b"")
 
-    def duplicate(self, dst: "Directory", dir_exist_ok: bool = False):
+    def duplicate(self, dst: Directory, dir_exist_ok: bool = False) -> Directory:
         from ufs.posix.posix_directory import PosixDirectory
 
         if isinstance(dst, PosixDirectory):
-            return self._download(dst)
-        elif not isinstance(dst, S3Directory):
-            raise NotImplementedError
-
-        source_prefix = self._path
-        for file_path in self.list_files(recursive=True):
-            _, _, source_bucket, file_path_prefix = file_path.split("/", 3)
-            source_relative_prefix = file_path.replace(source_prefix, "")
-            dst_file = dst.join_as_file(source_relative_prefix)
-            # create missing intermediate directories on Posix FileSystem
-            dst_dirname = os.path.dirname(dst_file)
-            os.makedirs(dst_dirname, exist_ok=True)
-
-            self._client.copy(
-                copy_source=dict(Bucket=source_bucket, Key=file_path_prefix),
-                Bucket=dst_file.bucket_name,
-                Key=dst_file.prefix,
-            )
-
-    def join_as_file(self, *other) -> "File":
-        from ufs.s3.s3_file import S3File
-
-        return S3File(join(self, *other))
-
-    def join_as_directory(self, *other) -> "Directory":
-        return S3Directory(join(self, *other))
-
-    def remove(self, missing_ok: bool = True, dry_run: bool = False, *args, **kwargs):
-        objects_list = list()
-
-        for file_path in self.list_files(recursive=True):
-            _, _, _, prefix = file_path.split("/", 3)
-            objects_list.append(dict(Key=prefix))
-            if len(objects_list) == 1000:
-                delete_s3_objects(
-                    s3_client=self._client,
-                    bucket_name=self.bucket_name,
-                    objects_list=objects_list,
-                    dry_run=dry_run,
+            if dst.exists() and not dir_exist_ok:
+                raise FileExistsError(str(dst))
+            self._download(dst)
+        elif isinstance(dst, S3Directory):
+            for key in self._iter_file_keys():
+                target = dst.join_as_file(key.removeprefix(self.prefix))
+                self.client.copy(
+                    CopySource={"Bucket": self.bucket_name, "Key": key},
+                    Bucket=target.bucket_name,
+                    Key=target.prefix,
                 )
-                objects_list = list()
+        else:
+            raise UnsupportedOperationError(f"Cannot copy {self!r} to {dst!r}")
+        return dst
 
-        if objects_list:
-            delete_s3_objects(
-                s3_client=self._client,
-                bucket_name=self.bucket_name,
-                objects_list=objects_list,
-                dry_run=dry_run,
-            )
+    def _join(self, other: tuple[str, ...]) -> str:
+        return posixpath.join(self._path, *(p.lstrip("/") for p in other))
 
-    def list_files(
-            self, recursive: bool = True, limit: int = -1, *args, **kwargs
-    ) -> list:
-        # TODO: pending implementation for recursive=False
-        paginator = self._client.get_paginator("list_objects_v2")
-        response_iterator = paginator.paginate(
-            Bucket=self.bucket_name, Prefix=self.prefx
-        )
-        files = list()
-        counter = 0
-        for response in response_iterator:
-            if "Contents" not in response:
-                continue
-            for content in response["Contents"]:
-                file_prefix = content["Key"]
-                files.append(f"{self._protocol}{self.bucket_name}/{file_prefix}")
-                counter += 1
-                if 0 < limit <= counter:
-                    break
-            if 0 < limit <= counter:
+    def join_as_file(self, *other: str) -> S3File:
+        return S3File(self._join(other), **self._options())
+
+    def join_as_directory(self, *other: str) -> S3Directory:
+        return S3Directory(self._join(other), **self._options())
+
+    def remove(self, missing_ok: bool = True, dry_run: bool = False) -> list[str]:
+        keys = [obj["Key"] for obj in self._iter_objects()]
+        if not keys and not missing_ok:
+            raise FileNotFoundError(self._path)
+        delete_s3_objects(self.client, self.bucket_name, keys, dry_run=dry_run)
+        return [self._url(key) for key in keys if not key.endswith("/")]
+
+    def list_files(self, recursive: bool = True, limit: int = -1) -> list[str]:
+        files: list[str] = []
+        for key in self._iter_file_keys(recursive):
+            files.append(self._url(key))
+            if 0 < limit <= len(files):
                 break
-
         return files
 
-    def list_file_objects(
-            self, recursive: bool = True, limit: int = -1, *args, **kwargs
-    ) -> list:
-        from ufs.s3.s3_file import S3File
+    def list_file_objects(self, recursive: bool = True, limit: int = -1) -> list[File]:
+        return [S3File(path, **self._options()) for path in self.list_files(recursive, limit=limit)]
 
-        file_objects = list()
-        for file_path in self.list_files(recursive, limit=limit):
-            file_objects.append(S3File(file_path))
-        return file_objects
-
-    def copy_to(self, dst: "Directory", dir_exist_ok: bool = False):
-        source_basename = os.path.basename(self)
-        dst = dst.join_as_directory(source_basename)
-        return self.duplicate(dst)
-
-    def archive_to_posix(self, dst: File, archive_format: str):
+    def archive_to_posix(self, dst: File, archive_format: ArchiveFormat) -> None:
         from ufs.posix.posix_directory import PosixDirectory
 
-        with tempfile.TemporaryDirectory() as temp_staging:
-            temp_stg = PosixDirectory(temp_staging)
-            # first download source s3 directory to Posix Directory
-            self._download(temp_stg)
-            temp_stg.zip_to(dst, archive_format=archive_format)
-
-    def archive_to_s3(self, dst: File, archive_format: str):
-        from ufs.posix.posix_file import PosixFile
-
-        temp_file = PosixFile(join(f'/tmp/{uuid4()}', os.path.basename(dst)))
-        self.archive_to_posix(temp_file, archive_format)
-        dst._upload(temp_file)
-
-    def tar_gz_to(self, dst: File):
-        from ufs.posix.posix_directory import PosixDirectory
-        from ufs.posix.posix_file import PosixFile
-        from ufs.s3.s3_file import S3File
-
-        with tempfile.TemporaryDirectory() as temp_staging:
-            temp_stg = PosixDirectory(temp_staging)
-            # first download source s3 directory to Posix Directory
-            self._download(temp_stg)
-
-            if isinstance(dst, PosixFile):
-                temp_stg.tar_gz_to(dst)
-            elif not isinstance(dst, S3File):
-                raise NotImplementedError
-
-            # then, zip it to Posix File (temporary) first
-            temp_tar_gz_file = PosixFile(f"/tmp/{uuid4()}/{os.path.basename(dst)}")
-            temp_stg.tar_gz_to(temp_tar_gz_file)
-            # then, upload to dst S3 File
-            dst._upload(temp_tar_gz_file)
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = PosixDirectory(tmp)
+            self._download(staging)
+            staging.archive_to_posix(dst, archive_format)
 
     def file_count(self) -> int:
-        return len(self.list_files(recursive=True))
+        return sum(1 for _ in self._iter_file_keys())
 
-    def is_directory_path(self) -> bool:
-        return True
+    def _download(self, dst: PosixObject) -> None:
+        """Download every file under this prefix into the local directory ``dst``.
 
-    def _download(self, dst: "PosixObject"):
+        ``s3://bucket/path/sub/file1.txt`` downloaded from ``s3://bucket/path/`` into
+        ``/tmp/somewhere/`` lands at ``/tmp/somewhere/sub/file1.txt``.
         """
-        Download S3Directory into posix directory
-        e.g. S3Directory = s3://bucket_name/file/path/
-            with file s3://bucket_name/file/path/prefix/file1.txt
-        into PosixDirectory /tmp/somewhere/
-            as /tmp/somewhere/prefix/file1.txt
-        outcome
-        :param dst: PosixDirectory, where contents of the source directory need to be downloaded into
-        :return: None
+        target_dir = dst.as_directory()
+        target_dir.create(exist_ok=True)
+        for key in self._iter_file_keys():
+            target = target_dir.join_as_file(key.removeprefix(self.prefix))
+            target.path.parent.mkdir(parents=True, exist_ok=True)
+            self.client.download_file(Bucket=self.bucket_name, Key=key, Filename=str(target))
+
+    def _upload(self, src: PosixObject) -> None:
+        """Upload every file under the local directory ``src`` beneath this prefix.
+
+        ``/tmp/somewhere/sub/file1.txt`` uploaded from ``/tmp/somewhere/`` into
+        ``s3://bucket/upload_to/`` lands at ``s3://bucket/upload_to/sub/file1.txt``.
         """
-        from ufs.posix.posix_directory import PosixDirectory
-
-        dst: PosixDirectory = dst.as_directory()
-        source_prefix = self._path
-        for file_path in self.list_files(recursive=True):
-            _, _, _, download_source_prefix = file_path.split("/", 3)
-            source_relative_prefix = file_path.replace(source_prefix, "")
-            dst_file = dst.join_as_file(source_relative_prefix)
-            # create missing intermediate directories on Posix FileSystem
-            dst_dirname = os.path.dirname(dst_file)
-            os.makedirs(dst_dirname, exist_ok=True)
-
-            self._client.download_file(
-                Bucket=self.bucket_name,
-                Key=download_source_prefix,
-                Filename=str(dst_file),
-            )
-
-    def _upload(self, src: "PosixObject"):
-        """
-        Upload PosixDirectory files into S3
-        e.g. PosixDirectory = /tmp/somewhere/
-            with file /tmp/somewhere/prefix/file1.txt
-        into S3Directory s3://bucket_name/upload_to/
-            as s3://bucket_name/upload_to/prefix/file1.txt
-        outcome
-        :param src: PosixDirectory, contents of the source directory need to be uploaded into S3
-        :return: None
-        """
-        from ufs.posix.posix_directory import PosixDirectory
-
-        src: PosixDirectory = src.as_directory()
-        src_prefix = str(src)
-        for file_path in src.list_files(recursive=True):
-            source_relative_path = file_path.replace(src_prefix, "")
-            dst_prefix = join(self.prefix, source_relative_path)
-            self._client.upload_file(
-                Filename=file_path, Bucket=self.bucket_name, Key=dst_prefix
-            )
+        source_dir = src.as_directory()
+        for file_path in source_dir.list_files(recursive=True):
+            key = self.prefix + file_path.removeprefix(str(source_dir))
+            self.client.upload_file(Filename=file_path, Bucket=self.bucket_name, Key=key)

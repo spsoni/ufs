@@ -1,22 +1,99 @@
-[tool.poetry]
+[project]
 name = "ufs"
-version = "0.1.0"
+version = "0.2.0"
 description = "Unified File System - Object Oriented way to work seamlessly between Posix and S3 filesystems"
-authors = ["Sury Soni <github@suryasoni.info>"]
-license = "MIT"
 readme = "README.md"
-homepage = "https://github.com/spsoni/ufs"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Sury Soni", email = "github@suryasoni.info" }]
 keywords = ["FileSystem", "Posix", "AWS", "S3"]
-repository = "https://github.com/spsoni/ufs"
-packages = [{ include = "ufs" }]
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Filesystems",
+    "Typing :: Typed",
+]
+dependencies = []
 
-[tool.poetry.dependencies]
-python = "^3.8.1"
+[project.optional-dependencies]
+s3 = ["boto3>=1.34"]
 
-[tool.poetry.group.dev.dependencies]
-pytest-cov = "^4.1.0"
-boto3 = "^1.26.158"
+[project.urls]
+Homepage = "https://github.com/spsoni/ufs"
+Repository = "https://github.com/spsoni/ufs"
+Issues = "https://github.com/spsoni/ufs/issues"
+Changelog = "https://github.com/spsoni/ufs/blob/main/CHANGELOG.md"
+Documentation = "https://spsoni.github.io/ufs/"
+
+[dependency-groups]
+dev = [
+    "boto3>=1.34",
+    "moto[s3]>=5.0",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = ["ufs", "tests", "docs", "mkdocs.yml", "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.format]
+# Keep hand-aligned comments in documentation code samples.
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "SIM",      # simplify
+    "BLE",      # blind except
+    "PTH",      # prefer pathlib
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PTH"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "moto.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --cov=ufs --cov-report=term-missing"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]

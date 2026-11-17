@@ -1,77 +1,108 @@
-import hashlib
-from io import BytesIO
+from __future__ import annotations
 
-from ufs.base import File
-from ufs.s3.s3_common import S3Object
+import logging
+from collections.abc import Iterator
+from pathlib import Path
+from typing import TYPE_CHECKING, BinaryIO, cast
+
+from ufs.base import CHUNK_SIZE, BinaryMode, File
+from ufs.exceptions import UnsupportedOperationError
+from ufs.s3.s3_common import S3Object, is_not_found
+from ufs.s3.s3_io import S3ObjectWriter, open_reader
+
+if TYPE_CHECKING:
+    from ufs.posix.posix_common import PosixObject
+
+logger = logging.getLogger(__name__)
+
+
+def _check_write_mode(mode: str) -> None:
+    mode = mode.upper()
+    if mode == "APPEND":
+        raise UnsupportedOperationError("S3 objects cannot be appended to")
+    if mode not in ("WRITE", "OVERWRITE"):
+        raise UnsupportedOperationError(f"Unsupported mode: {mode!r}")
 
 
 class S3File(S3Object, File):
-    def _download(self, dst: "PosixObject"):
-        self._client.download_file(Bucket=self.bucket_name, Key=self.prefix, Filename=str(dst))
+    """An object in an S3 bucket, e.g. ``s3://bucket/path/to/file.txt``."""
 
-    def _upload(self, src: "PosixObject"):
-        self._client.upload_file(Bucket=self.bucket_name, Key=self.prefix, Filename=str(src))
+    def _validate_path(self, path: str) -> bool:
+        key = path.removeprefix(self._protocol).partition("/")[2]
+        return bool(key) and super()._validate_path(path)
+
+    def _download(self, dst: PosixObject) -> None:
+        Path(dst).parent.mkdir(parents=True, exist_ok=True)
+        self.client.download_file(Bucket=self.bucket_name, Key=self.prefix, Filename=str(dst))
+
+    def _upload(self, src: PosixObject) -> None:
+        self.client.upload_file(Filename=str(src), Bucket=self.bucket_name, Key=self.prefix)
+
+    def _open_binary(self, mode: BinaryMode) -> BinaryIO:
+        if mode == "rb":
+            return open_reader(self.client, self.bucket_name, self.prefix)
+        if mode == "ab":
+            raise UnsupportedOperationError("S3 objects cannot be appended to")
+        return cast(BinaryIO, S3ObjectWriter(self.client, self.bucket_name, self.prefix))
 
     def size(self) -> int:
-        try:
-            response = self._client.head_object(Bucket=self.bucket_name, Key=self.prefix)
-            return response['ContentLength']
-        except:
-            # if there is a permission error for head_object
-            response = self._client.get_object(Bucket=self.bucket_name, Key=self.prefix)
-            return response['ContentLength']
+        response = self.client.head_object(Bucket=self.bucket_name, Key=self.prefix)
+        return int(response["ContentLength"])
 
     def exists(self) -> bool:
         try:
-            self._client.head_object(Bucket=self.bucket_name, Key=self.prefix)
-            return True
-        except:
-            # if there is a permission error for head_object
-            try:
-                self._client.get_object(Bucket=self.bucket_name, Key=self.prefix)
-                return True
-            except:
-                pass
-        return False
+            self.client.head_object(Bucket=self.bucket_name, Key=self.prefix)
+        except Exception as exc:
+            if is_not_found(exc):
+                return False
+            raise
+        return True
 
-    def write_text(self, content: str, mode, *args, **kwargs):
-        self._client.put_object(
-            Bucket=self.bucket_name,
-            Key=self.prefix,
-            Body=content.encode('urf-8')
-        )
+    def write_text(self, content: str, mode: str = "WRITE", encoding: str = "utf-8") -> None:
+        self.write_bytes(content.encode(encoding), mode)
 
-    def write_bytes(self, content: bytes, mode, encoding="utf-8", *args, **kwargs):
-        self._client.put_object(
-            Bucket=self.bucket_name,
-            Key=self.prefix,
-            Body=content
-        )
+    def write_bytes(self, content: bytes, mode: str = "WRITE") -> None:
+        _check_write_mode(mode)
+        self.client.put_object(Bucket=self.bucket_name, Key=self.prefix, Body=content)
 
-    def touch(self, *args, **kwargs):
-        pass
-
-    def remove(self, dry_run: bool = False, *args, **kwargs):
-        if dry_run:
-            print(f'Deleting: s3://{self.bucket_name}/{self.prefix}')
+    def touch(self, exist_ok: bool = True) -> None:
+        if self.exists():
+            if not exist_ok:
+                raise FileExistsError(self._path)
             return
-        self._client.delete_object(Bucket=self.bucket_name, Key=self.prefix)
+        self.write_bytes(b"")
 
-    def read_text(self):
-        response = self._client.get_object(Bucket=self.bucket_name, Key=self.prefix)
-        return response['Body'].read().decode('utf-8')
+    def remove(self, missing_ok: bool = True, dry_run: bool = False) -> None:
+        if not missing_ok and not self.exists():
+            raise FileNotFoundError(self._path)
+        if dry_run:
+            logger.info("Deleting (dry run): %s", self)
+            return
+        self.client.delete_object(Bucket=self.bucket_name, Key=self.prefix)
 
-    def read_bytes(self):
-        response = self._client.get_object(Bucket=self.bucket_name, Key=self.prefix)
-        return response['Body'].read()
+    def read_text(self, encoding: str = "utf-8") -> str:
+        return self.read_bytes().decode(encoding)
 
-    def checksum(self, *args, **kwargs) -> str:
-        content = self.read_bytes()
-        digest = hashlib.file_digest(BytesIO(content), "sha256")
-        return digest.hexdigest()
+    def read_bytes(self) -> bytes:
+        response = self.client.get_object(Bucket=self.bucket_name, Key=self.prefix)
+        data: bytes = response["Body"].read()
+        return data
 
-    def duplicate(self, dst: "File"):
-        raise NotImplementedError
+    def _iter_chunks(self) -> Iterator[bytes]:
+        response = self.client.get_object(Bucket=self.bucket_name, Key=self.prefix)
+        yield from response["Body"].iter_chunks(CHUNK_SIZE)
 
-    def copy_to(self, dst: "Directory"):
-        raise NotImplementedError
+    def duplicate(self, dst: File) -> File:
+        from ufs.posix.posix_file import PosixFile
+
+        if isinstance(dst, PosixFile):
+            self._download(dst)
+        elif isinstance(dst, S3File):
+            self.client.copy(
+                CopySource={"Bucket": self.bucket_name, "Key": self.prefix},
+                Bucket=dst.bucket_name,
+                Key=dst.prefix,
+            )
+        else:
+            raise UnsupportedOperationError(f"Cannot copy {self!r} to {dst!r}")
+        return dst

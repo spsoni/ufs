@@ -70,3 +70,10 @@ venv.bak/
 
 # PyCharm
 .idea/
+
+# Tool caches
+.ruff_cache/
+.mypy_cache/
+
+# MkDocs build output
+site/

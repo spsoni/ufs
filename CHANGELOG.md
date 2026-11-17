@@ -23,6 +23,12 @@ All notable changes to this project are documented here. The format follows
   and streams the contents.
 
 ### Added
+- `File.open()` for streaming reads and writes on both backends, compatible with `csv`,
+  `json`, pandas and so on. S3 writes upload on close and are discarded if the block raises.
+- Path helpers: `name`, `parent`, `stem`, `suffix`, and `/` on directories.
+- `Directory.glob(pattern)`.
+- A documentation site (MkDocs Material + mkdocstrings) with a user guide and API reference,
+  plus `CONTRIBUTING.md`.
 - Copying files and directories in all four directions: local↔S3 and within each backend.
 - `Directory.archive_to()`, plus the `tar`, `bztar` and `xztar` archive formats.
 - `S3Directory.list_files(recursive=False)`.

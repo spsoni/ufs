@@ -1,97 +1,130 @@
-# Unified File System
+<div align="center">
 
+# ufs · Unified File System
+
+**One object-oriented API for local and S3 files.**<br>
+Write your file-handling code once and run it against `/local/paths` or `s3://bucket/keys`.
+
+[![PyPI](https://img.shields.io/pypi/v/ufs?color=blue)](https://pypi.org/project/ufs/)
+[![Python](https://img.shields.io/pypi/pyversions/ufs)](https://pypi.org/project/ufs/)
 [![CI](https://github.com/spsoni/ufs/actions/workflows/python-package.yml/badge.svg)](https://github.com/spsoni/ufs/actions/workflows/python-package.yml)
+[![Docs](https://github.com/spsoni/ufs/actions/workflows/docs.yml/badge.svg)](https://spsoni.github.io/ufs/)
 [![CodeQL](https://github.com/spsoni/ufs/actions/workflows/codeql.yml/badge.svg)](https://github.com/spsoni/ufs/actions/workflows/codeql.yml)
-[![PyPI](https://img.shields.io/pypi/v/ufs)](https://pypi.org/project/ufs/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A common problem: you write code against the local filesystem first, then have to make it
-work with S3, which usually means duplicating the logic with `os`/`shutil` on one side and
-`boto3` on the other.
+[Documentation](https://spsoni.github.io/ufs/) ·
+[Getting started](https://spsoni.github.io/ufs/getting-started/) ·
+[API reference](https://spsoni.github.io/ufs/api/) ·
+[Changelog](CHANGELOG.md)
 
-`ufs` gives you one object-oriented API for both. `PosixFile` and `S3File` share the `File`
-interface, and `PosixDirectory` and `S3Directory` share the `Directory` interface, so your
-functions can take either kind of path.
+</div>
+
+---
+
+## Why ufs?
+
+Code that starts out on the local filesystem usually ends up needing to work with S3 too.
+That tends to produce two code paths, one built on `os`/`shutil` and one on `boto3`, which
+then drift apart. `ufs` gives you `File` and `Directory` abstractions with a local
+implementation and an S3 implementation, so your functions can accept either:
+
+```python
+import csv
+from ufs import FS, Directory
+
+
+def export(rows: list[dict[str, str]], out: Directory) -> None:
+    with out.join_as_file("export.csv").open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+export(rows, FS.to_directory("/tmp/out"))         # during development
+export(rows, FS.to_directory("s3://bucket/out"))  # in production, with no code changes
+```
+
+## Features
+
+- **Same API on both backends:** `PosixFile`/`S3File` and `PosixDirectory`/`S3Directory`
+  share one interface.
+- **Streaming `open()`:** works with `csv`, `json`, pandas and anything else that takes a
+  file object. S3 reads stream in chunks, and S3 writes upload on close.
+- **Path ergonomics:** `/` joins, `parent`, `name`, `stem`, `suffix` and `glob()`.
+- **Copying in every direction:** local↔S3 and within each backend, for single files or
+  whole trees. S3→S3 copies happen server-side.
+- **Archiving** to `zip`, `tar`, `tar.gz`, `tar.bz2` or `tar.xz`, locally or straight to S3.
+- **Safe by default:** `dry_run` deletes, no partial uploads when a write fails, and a clear
+  exception hierarchy.
+- **Typed and tested:** ships `py.typed`, passes strict mypy, and is tested against moto on
+  Python 3.11–3.14.
 
 ## Installation
 
 ```bash
-pip install ufs          # local filesystem only
-pip install 'ufs[s3]'    # adds S3 support (boto3)
+pip install ufs          # local filesystem only, no dependencies
+pip install 'ufs[s3]'    # adds S3 support via boto3
 ```
 
-Requires Python 3.11+.
-
-## Usage
+## Quick tour
 
 ```python
 from ufs import FS
 
-# The factory picks the implementation from the path.
-src = FS.to_directory("/data/reports")  # PosixDirectory
-dst = FS.to_directory("s3://my-bucket/reports")  # S3Directory
+data = FS.to_directory("s3://my-bucket/data")  # or "/srv/data"
 
-for f in src.list_file_objects():
-    print(f, f.size(), f.checksum())
+# Read and write
+report = data.join_as_file("2024", "report.txt")  # or: data / "2024/report.txt"
+report.write_text("hello")
+report.read_text()                              # 'hello'
 
-src.duplicate(dst, dir_exist_ok=True)  # upload the whole tree
-dst.archive_to(FS.to_file("/tmp/reports.zip"), "zip")
+with data.join_as_file("big.bin").open("wb") as f:  # streamed upload
+    f.write(b"...")
 
-note = dst.join_as_file("notes", "readme.txt")
-note.write_text("hello")
-assert note.read_text() == "hello"
-note.copy_to(FS.to_directory("/tmp/inbox"))  # -> /tmp/inbox/readme.txt
+# Explore
+data.list_files(recursive=False)
+data.glob("2024/*.csv")
+report.name, report.suffix, report.parent      # ('report.txt', '.txt', S3Directory('s3://my-bucket/data/2024/'))
+
+# Copy and archive across backends
+report.copy_to(FS.to_directory("/tmp/inbox"))   # download
+data.duplicate(FS.to_directory("s3://backup/data"))
+data.archive_to(FS.to_file("/tmp/data.tar.gz"), "gztar")
+
+# Clean up safely
+data.remove(dry_run=True)                      # logs what would be deleted
 ```
 
-Code written against the base classes works with either backend:
-
-```python
-from ufs import Directory
-
-
-def newest_csvs(directory: Directory, n: int = 10) -> list[str]:
-    return [p for p in directory.list_files() if p.endswith(".csv")][:n]
-```
-
-### S3 client
-
-By default each S3 object creates `boto3.client("s3")` on first use. To control credentials,
-region or endpoint, pass your own client. Objects derived from it (`join_as_file`,
-`list_file_objects`, ...) reuse it:
+To use specific credentials, a region, or an S3-compatible service such as MinIO or R2,
+pass your own client:
 
 ```python
 import boto3
-from ufs import FS
 
 client = boto3.client("s3", endpoint_url="http://localhost:9000")
-bucket = FS.to_directory("s3://my-bucket/", s3_client=client)
+data = FS.to_directory("s3://my-bucket/data", s3_client=client)
 ```
 
-### Behaviour notes
+See the [user guide](https://spsoni.github.io/ufs/guide/paths/) for every feature.
 
-- Directory paths always end with `/`. Relative local paths are made absolute.
-- Local writes create missing parent directories, the same as S3 where directories are implicit.
-- S3 directories are logical by default: `create()` does nothing and `exists()` is true
-  when there is at least one object under the prefix. Pass `keep_directories_logical=False`
-  to have `create()` write a `prefix/` marker object instead.
-- `APPEND` mode is not supported on S3 and raises `UnsupportedOperationError`.
-- `remove(dry_run=True)` logs what would be deleted (logger `ufs.*`) and deletes nothing.
-  `Directory.remove()` returns the file paths it removed.
-- Archive formats: `zip`, `tar`, `gztar`, `bztar`, `xztar`. The destination's extension
-  must match the format.
+## API at a glance
 
-## Development
+| | Local | S3 |
+| --- | --- | --- |
+| File | `PosixFile` | `S3File` |
+| Directory | `PosixDirectory` | `S3Directory` |
+| Build from any path | `FS.to_file(path)`, `FS.to_directory(path)` | ← same |
+| Streaming | `open("r" / "w" / "a" / "rb" / "wb" / "ab")` | no `a`/`ab` (objects are immutable) |
+| Whole file | `read_text`, `read_bytes`, `write_text`, `write_bytes`, `touch`, `remove` | ← same |
+| Metadata | `exists`, `size`, `checksum`, `name`, `stem`, `suffix`, `parent` | ← same |
+| Directories | `list_files`, `list_file_objects`, `glob`, `file_count`, `create`, `remove` | ← same |
+| Transfer | `duplicate`, `copy_to`, `archive_to` | ← same, across backends |
 
-The project uses [uv](https://docs.astral.sh/uv/).
+## Contributing
 
-```bash
-uv sync                      # create .venv with dev dependencies
-uv run pytest                # tests (S3 is mocked with moto)
-uv run ruff check . && uv run ruff format --check .
-uv run mypy ufs tests
-uv run pre-commit install    # optional: lint on commit
-uv build                     # sdist + wheel in dist/
-```
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup
+(uv, pytest, ruff, mypy, mkdocs). To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT
+[MIT](LICENSE) © Sury Soni

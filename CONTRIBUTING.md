@@ -40,6 +40,10 @@ Preview the docs locally with `uv run mkdocs serve`.
 
 ## Releasing
 
-1. Update `version` in `pyproject.toml` and move the *Unreleased* changelog entries under it.
-2. Merge to `main`, then tag: `git tag vX.Y.Z && git push --tags`.
-3. Build and upload: `uv build && uv publish`.
+1. Bump the version (`uv version --bump minor`, or edit `pyproject.toml`), and move the
+   *Unreleased* changelog entries under it with today's date.
+2. Merge to `main`.
+3. Publish a GitHub release tagged `vX.Y.Z`, for example
+   `gh release create vX.Y.Z --generate-notes`. The *Release* workflow checks that the tag
+   matches the package version, runs the tests, and publishes to PyPI through trusted
+   publishing. No token is needed.

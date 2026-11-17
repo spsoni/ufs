@@ -4,8 +4,9 @@ import logging
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
+from typing import BinaryIO
 
-from ufs.base import CHUNK_SIZE, File
+from ufs.base import CHUNK_SIZE, BinaryMode, File
 from ufs.exceptions import UnsupportedOperationError
 from ufs.posix.posix_common import PosixObject, convert_mode
 
@@ -23,7 +24,13 @@ class PosixFile(PosixObject, File):
 
     @property
     def path(self) -> Path:
+        """This file as a :class:`pathlib.Path`."""
         return Path(self._path)
+
+    def _open_binary(self, mode: BinaryMode) -> BinaryIO:
+        if mode != "rb":
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        return self.path.open(mode)
 
     def write_text(self, content: str, mode: str = "WRITE", encoding: str = "utf-8") -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

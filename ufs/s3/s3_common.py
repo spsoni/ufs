@@ -87,15 +87,19 @@ class S3Object(FileSystemObject, ABC):
     @abstractmethod
     def _upload(self, src: PosixObject) -> None: ...
 
-    def as_file(self) -> S3File:
+    @property
+    def _root(self) -> str:
+        return f"{self._protocol}{self.bucket_name}/"
+
+    def _file(self, path: str) -> S3File:
         from ufs.s3.s3_file import S3File
 
-        return S3File(self._path.rstrip("/"), **self._options())
+        return S3File(path, **self._options())
 
-    def as_directory(self) -> S3Directory:
+    def _directory(self, path: str) -> S3Directory:
         from ufs.s3.s3_directory import S3Directory
 
-        return S3Directory(self._path, **self._options())
+        return S3Directory(path, **self._options())
 
 
 def is_not_found(exc: Exception) -> bool:

@@ -20,6 +20,7 @@ class PosixDirectory(PosixObject, Directory):
 
     @property
     def path(self) -> Path:
+        """This directory as a :class:`pathlib.Path`."""
         return Path(self._path)
 
     def create(self, parents: bool = True, exist_ok: bool = False) -> None:
@@ -35,12 +36,6 @@ class PosixDirectory(PosixObject, Directory):
         else:
             raise UnsupportedOperationError(f"Cannot copy {self!r} to {dst!r}")
         return dst
-
-    def join_as_file(self, *other: str) -> PosixFile:
-        return PosixFile(self.path.joinpath(*(p.lstrip("/") for p in other)))
-
-    def join_as_directory(self, *other: str) -> PosixDirectory:
-        return PosixDirectory(self.path.joinpath(*(p.lstrip("/") for p in other)))
 
     def remove(self, missing_ok: bool = True, dry_run: bool = False) -> list[str]:
         if not self.exists():
@@ -60,9 +55,6 @@ class PosixDirectory(PosixObject, Directory):
     def list_files(self, recursive: bool = True, limit: int = -1) -> list[str]:
         files = sorted(entry.path for entry in iter_files(self._path, recursive))
         return files[:limit] if limit > 0 else files
-
-    def list_file_objects(self, recursive: bool = True, limit: int = -1) -> list[File]:
-        return [PosixFile(f) for f in self.list_files(recursive, limit=limit)]
 
     def archive_to_posix(self, dst: File, archive_format: ArchiveFormat) -> None:
         if not isinstance(dst, PosixFile):

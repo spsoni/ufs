@@ -84,8 +84,29 @@ class TestS3File:
 
     def test_client_propagates(self, s3_client: Any) -> None:
         d = s3dir(s3_client, "p/")
-        assert d.join_as_file("x").client is s3_client
-        assert d.join_as_directory("y").as_file().client is s3_client
+        derived = [
+            d.join_as_file("x"),
+            d.join_as_directory("y").as_file(),
+            d.parent,
+            d / "z.txt",
+        ]
+        for obj in derived:
+            assert isinstance(obj, (S3File, S3Directory))
+            assert obj.client is s3_client
+
+    def test_open_append_is_unsupported(self, s3_client: Any) -> None:
+        with pytest.raises(UnsupportedOperationError):
+            s3file(s3_client, "x").open("a")
+
+    def test_open_streams_large_objects(self, s3_client: Any) -> None:
+        payload = bytes(range(256)) * 20_000  # ~5 MB, spans several read chunks
+        f = s3file(s3_client, "big.bin")
+        with f.open("wb") as out:
+            for i in range(0, len(payload), 100_000):
+                out.write(payload[i : i + 100_000])
+        with f.open("rb") as src:
+            assert src.read(10) == payload[:10]
+            assert src.read() == payload[10:]
 
 
 class TestS3Directory:

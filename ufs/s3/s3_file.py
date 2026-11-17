@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO, cast
 
-from ufs.base import CHUNK_SIZE, File
+from ufs.base import CHUNK_SIZE, BinaryMode, File
 from ufs.exceptions import UnsupportedOperationError
 from ufs.s3.s3_common import S3Object, is_not_found
+from ufs.s3.s3_io import S3ObjectWriter, open_reader
 
 if TYPE_CHECKING:
     from ufs.posix.posix_common import PosixObject
@@ -36,6 +37,13 @@ class S3File(S3Object, File):
 
     def _upload(self, src: PosixObject) -> None:
         self.client.upload_file(Filename=str(src), Bucket=self.bucket_name, Key=self.prefix)
+
+    def _open_binary(self, mode: BinaryMode) -> BinaryIO:
+        if mode == "rb":
+            return open_reader(self.client, self.bucket_name, self.prefix)
+        if mode == "ab":
+            raise UnsupportedOperationError("S3 objects cannot be appended to")
+        return cast(BinaryIO, S3ObjectWriter(self.client, self.bucket_name, self.prefix))
 
     def size(self) -> int:
         response = self.client.head_object(Bucket=self.bucket_name, Key=self.prefix)

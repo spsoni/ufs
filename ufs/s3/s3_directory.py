@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import posixpath
 import tempfile
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ufs.base import ArchiveFormat, Directory, File
 from ufs.exceptions import UnsupportedOperationError
 from ufs.s3.s3_common import S3Object, delete_s3_objects
-from ufs.s3.s3_file import S3File
 
 if TYPE_CHECKING:
     from ufs.posix.posix_common import PosixObject
@@ -59,24 +58,14 @@ class S3Directory(S3Object, Directory):
             self._download(dst)
         elif isinstance(dst, S3Directory):
             for key in self._iter_file_keys():
-                target = dst.join_as_file(key.removeprefix(self.prefix))
                 self.client.copy(
                     CopySource={"Bucket": self.bucket_name, "Key": key},
-                    Bucket=target.bucket_name,
-                    Key=target.prefix,
+                    Bucket=dst.bucket_name,
+                    Key=dst.prefix + key.removeprefix(self.prefix),
                 )
         else:
             raise UnsupportedOperationError(f"Cannot copy {self!r} to {dst!r}")
         return dst
-
-    def _join(self, other: tuple[str, ...]) -> str:
-        return posixpath.join(self._path, *(p.lstrip("/") for p in other))
-
-    def join_as_file(self, *other: str) -> S3File:
-        return S3File(self._join(other), **self._options())
-
-    def join_as_directory(self, *other: str) -> S3Directory:
-        return S3Directory(self._join(other), **self._options())
 
     def remove(self, missing_ok: bool = True, dry_run: bool = False) -> list[str]:
         keys = [obj["Key"] for obj in self._iter_objects()]
@@ -92,9 +81,6 @@ class S3Directory(S3Object, Directory):
             if 0 < limit <= len(files):
                 break
         return files
-
-    def list_file_objects(self, recursive: bool = True, limit: int = -1) -> list[File]:
-        return [S3File(path, **self._options()) for path in self.list_files(recursive, limit=limit)]
 
     def archive_to_posix(self, dst: File, archive_format: ArchiveFormat) -> None:
         from ufs.posix.posix_directory import PosixDirectory
@@ -117,7 +103,7 @@ class S3Directory(S3Object, Directory):
         target_dir.create(exist_ok=True)
         for key in self._iter_file_keys():
             target = target_dir.join_as_file(key.removeprefix(self.prefix))
-            target.path.parent.mkdir(parents=True, exist_ok=True)
+            Path(target).parent.mkdir(parents=True, exist_ok=True)
             self.client.download_file(Bucket=self.bucket_name, Key=key, Filename=str(target))
 
     def _upload(self, src: PosixObject) -> None:

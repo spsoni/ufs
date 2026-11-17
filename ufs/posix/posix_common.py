@@ -21,15 +21,19 @@ class PosixObject(FileSystemObject, ABC):
         # abspath (not Path.resolve) leaves symlinks unresolved.
         return super()._normalise(os.path.abspath(path))  # noqa: PTH100
 
-    def as_file(self) -> PosixFile:
+    @property
+    def _root(self) -> str:
+        return "/"
+
+    def _file(self, path: str) -> PosixFile:
         from ufs.posix.posix_file import PosixFile
 
-        return PosixFile(self._path)
+        return PosixFile(path)
 
-    def as_directory(self) -> PosixDirectory:
+    def _directory(self, path: str) -> PosixDirectory:
         from ufs.posix.posix_directory import PosixDirectory
 
-        return PosixDirectory(self._path)
+        return PosixDirectory(path)
 
 
 def convert_mode(mode: str, format: str) -> str:
